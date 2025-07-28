@@ -68,7 +68,7 @@ if st.button("🚀 Convert to VCF"):
     if not contacts:
         st.error("❌ No valid phone numbers found.")
     else:
-        vcf_dict = generate_vcf(contacts, prefix, set_start, batch_size)
+        vcf_dict = generate_vcf(contacts, prefix, start_set, batch_size)
 
         # Create ZIP archive in memory
         zip_buffer = io.BytesIO()
@@ -93,5 +93,10 @@ if st.button("🚀 Convert to VCF"):
 
 st.markdown("""
 ---
-Made with ❤️ for mobile and desktop. Paste, upload, convert — done!
+📌 Bonus:
+- Works on mobile (try installing as shortcut)
+- Add multiple TXT files at once
+- Admin/Navy preset: set prefix as "Admin" or "Navy"
+- Automatically adds '+' to numbers
+- Contact name follows this format: Prefix + Set + Serial (e.g., Contact 01 001)
 """)
