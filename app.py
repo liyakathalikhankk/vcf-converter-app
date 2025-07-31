@@ -6,11 +6,9 @@ import zipfile
 from datetime import datetime
 
 st.set_page_config(page_title="VCF Converter", layout="wide")
-st.title("📇 VCF Converter (TXT ➜ VCF)")
+st.title("📇 VCF Converter (TXT ⇄ VCF)")
 
-st.markdown("""
-Convert plain phone numbers into VCF contact files. Works great on desktop and mobile!
-""")
+st.markdown("Convert contact numbers between .txt and .vcf formats. Mobile-ready, easy and fast!")
 
 def clean_number(n):
     n = n.strip()
@@ -18,7 +16,7 @@ def clean_number(n):
         return n if n.startswith('+') else '+' + n
     return None
 
-def generate_vcf(contacts, name_prefix, set_start=1, batch_size=50):
+def generate_vcf(contacts, name_prefix, file_prefix, set_start=1, batch_size=50):
     vcf_files = {}
     total_contacts = len(contacts)
     total_sets = (total_contacts + batch_size - 1) // batch_size
@@ -36,67 +34,92 @@ def generate_vcf(contacts, name_prefix, set_start=1, batch_size=50):
             lines.append(f"FN:{name}")
             lines.append(f"TEL;TYPE=CELL:{num}")
             lines.append("END:VCARD")
-        vcf_files[f"{name_prefix}_{set_start + set_num}.vcf"] = "\n".join(lines)
+        vcf_files[f"{file_prefix}_{set_start + set_num}.vcf"] = "\n".join(lines)
     return vcf_files
 
-uploaded_files = st.file_uploader("📂 Upload TXT file(s) with phone numbers", type=["txt"], accept_multiple_files=True)
+tabs = st.tabs(["🔁 TXT ➜ VCF", "🔄 VCF ➜ TXT"])
 
-manual_input = st.text_area("✍️ Or Paste Numbers Here (one per line)", height=200)
+with tabs[0]:
+    st.header("🔁 TXT ➜ VCF")
+    uploaded_files = st.file_uploader("📂 Upload TXT file(s) with phone numbers", type=["txt"], accept_multiple_files=True)
+    manual_input = st.text_area("✍️ Or Paste Numbers Here (one per line)", height=200)
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    prefix = st.text_input("🔤 Contact Name Prefix", value="Contact")
-with col2:
-    start_set = st.number_input("🔢 Start Set Number", value=1, min_value=1)
-with col3:
-    batch_size = st.number_input("📦 Contacts per VCF", value=50, min_value=1)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        contact_type = st.radio("Contact Type", ["General", "Admin", "Navy"])
+    with col2:
+        batch_size = st.number_input("📦 Contacts per VCF", value=50, min_value=1)
+    with col3:
+        set_start = st.number_input("🔢 Start Set Number", value=1, min_value=1)
 
-if st.button("🚀 Convert to VCF"):
-    raw_numbers = []
-
-    if uploaded_files:
-        for file in uploaded_files:
-            content = file.read().decode("utf-8")
-            raw_numbers.extend(content.strip().splitlines())
-
-    if manual_input.strip():
-        raw_numbers.extend(manual_input.strip().splitlines())
-
-    cleaned = [clean_number(n) for n in raw_numbers]
-    contacts = sorted(set(filter(None, cleaned)), key=lambda x: int(x.replace('+', '').lstrip('0') or '0'))
-
-    if not contacts:
-        st.error("❌ No valid phone numbers found.")
+    if contact_type == "General":
+        name_prefix = st.text_input("🔤 Contact Name Prefix (for FN/N field)", value="Contact")
+        file_prefix = st.text_input("📁 VCF Filename Prefix", value="vcf_file")
     else:
-        vcf_dict = generate_vcf(contacts, prefix, start_set, batch_size)
+        name_prefix = contact_type
+        file_prefix = contact_type.lower()
 
-        # Create ZIP archive in memory
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for filename, content in vcf_dict.items():
-                zipf.writestr(filename, content)
-        zip_buffer.seek(0)
+    if st.button("🚀 Convert to VCF"):
+        raw_numbers = []
 
-        # Summary
-        st.success(f"✅ Converted {len(contacts)} contacts into {len(vcf_dict)} VCF file(s)")
-        st.download_button("📥 Download VCF ZIP", zip_buffer, file_name="vcf_contacts.zip", mime="application/zip")
+        if uploaded_files:
+            for file in uploaded_files:
+                content = file.read().decode("utf-8")
+                raw_numbers.extend(content.strip().splitlines())
 
-        st.markdown("---")
-        st.markdown("### 🔍 Summary")
-        st.text(f"Total numbers entered      : {len(raw_numbers)}")
-        st.text(f"Valid + unique contacts     : {len(contacts)}")
-        st.text(f"VCF files generated         : {len(vcf_dict)}")
-        st.text(f"Contacts per file           : {batch_size}")
-        st.text(f"Contact name format         : {prefix} <set> <number>")
-        st.text(f"Set numbering starts from   : {start_set}")
-        st.markdown("---")
+        if manual_input.strip():
+            raw_numbers.extend(manual_input.strip().splitlines())
+
+        cleaned = [clean_number(n) for n in raw_numbers]
+        contacts = sorted(set(filter(None, cleaned)), key=lambda x: int(x.replace('+', '').lstrip('0') or '0'))
+
+        if not contacts:
+            st.error("❌ No valid phone numbers found.")
+        else:
+            vcf_dict = generate_vcf(contacts, name_prefix, file_prefix, set_start, batch_size)
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for filename, content in vcf_dict.items():
+                    zipf.writestr(filename, content)
+            zip_buffer.seek(0)
+
+            st.success(f"✅ Converted {len(contacts)} contacts into {len(vcf_dict)} VCF file(s)")
+            st.download_button("📥 Download VCF ZIP", zip_buffer, file_name=f"{file_prefix}_contacts.zip", mime="application/zip")
+
+            st.markdown("---")
+            st.subheader("📊 Summary")
+            st.text(f"Total numbers entered      : {len(raw_numbers)}")
+            st.text(f"Valid + unique contacts     : {len(contacts)}")
+            st.text(f"VCF files generated         : {len(vcf_dict)}")
+            st.text(f"Contact name format         : {name_prefix} <set> <serial>")
+            st.text(f"VCF file prefix             : {file_prefix}")
+
+
+with tabs[1]:
+    st.header("🔄 VCF ➜ TXT")
+    vcf_files = st.file_uploader("📥 Upload one or more .vcf files", type=["vcf"], accept_multiple_files=True)
+    custom_txt_name = st.text_input("📁 TXT Filename (no extension)", value="contacts")
+
+    if vcf_files:
+        numbers = []
+        for vcf_file in vcf_files:
+            content = vcf_file.read().decode("utf-8")
+            lines = content.strip().splitlines()
+            for line in lines:
+                if line.startswith("TEL"):
+                    number = line.split(":")[-1].strip()
+                    number = ''.join(filter(str.isdigit, number))  # Remove + and symbols
+                    if number:
+                        numbers.append(number)
+
+        if numbers:
+            txt_data = "\n".join(numbers)
+            st.download_button("📤 Download TXT", txt_data, file_name=f"{custom_txt_name}.txt", mime="text/plain")
+            st.success(f"✅ Extracted {len(numbers)} contacts from {len(vcf_files)} VCF file(s).")
+        else:
+            st.error("⚠️ No contacts found in uploaded VCF files.")
 
 st.markdown("""
 ---
-📌 Bonus:
-- Works on mobile (try installing as shortcut)
-- Add multiple TXT files at once
-- Admin/Navy preset: set prefix as "Admin" or "Navy"
-- Automatically adds '+' to numbers
-- Contact name follows this format: Prefix + Set + Serial (e.g., Contact 01 001)
+Made by Liyakath Ali Khan ✨ | Mobile-ready VCF tool | Streamlit-powered
 """)
