@@ -128,6 +128,7 @@ with tab3:
     st.header("📂 Split Files")
 
     split_choice = st.radio("Choose file type to split", ["TXT", "VCF"])
+    custom_prefix = st.text_input("📁 Custom Split Filename Prefix", value="split")
 
     if split_choice == "TXT":
         txt_file = st.file_uploader("📂 Upload TXT file", type=["txt"])
@@ -140,10 +141,10 @@ with tab3:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for idx, chunk in enumerate(chunks, 1):
-                    zipf.writestr(f"split_{idx}.txt", "\n".join(chunk))
+                    zipf.writestr(f"{custom_prefix}_{idx}.txt", "\n".join(chunk))
             zip_buffer.seek(0)
 
-            st.download_button("📥 Download Split TXT ZIP", zip_buffer, file_name="split_txt_files.zip", mime="application/zip")
+            st.download_button("📥 Download Split TXT ZIP", zip_buffer, file_name=f"{custom_prefix}_txt_files.zip", mime="application/zip")
             st.success(f"✅ Split into {len(chunks)} TXT files")
 
     elif split_choice == "VCF":
@@ -158,11 +159,11 @@ with tab3:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for idx, chunk in enumerate(chunks, 1):
-                    zipf.writestr(f"split_{idx}.vcf", "\n".join(chunk))
+                    zipf.writestr(f"{custom_prefix}_{idx}.vcf", "\n".join(chunk))
             zip_buffer.seek(0)
 
-            st.download_button("📥 Download Split VCF ZIP", zip_buffer, file_name="split_vcf_files.zip", mime="application/zip")
+            st.download_button("📥 Download Split VCF ZIP", zip_buffer, file_name=f"{custom_prefix}_vcf_files.zip", mime="application/zip")
             st.success(f"✅ Split into {len(chunks)} VCF files")
 
 
-st.markdown("---\nMade by Liyakath Ali Khan ✨ | Mobile-ready VCF tool | Streamlit-powered")
+st.markdown("---\nMade by **Liyakath Ali Khan ✨** | Mobile-ready VCF tool | Streamlit-powered")
