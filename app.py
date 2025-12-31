@@ -1,169 +1,307 @@
-# app.py
 import streamlit as st
-import os
-import io
-import zipfile
+import io, zipfile, re
+import phonenumbers
+import pandas as pd
+from collections import Counter
 
-st.set_page_config(page_title="VCF Converter", layout="wide")
-st.title("📇 VCF Converter (TXT ⇄ VCF + Splitter)")
+# -------------------------------------------------
+# PAGE CONFIG
+# -------------------------------------------------
+st.set_page_config(
+    page_title="VCF Converter Pro+",
+    page_icon="📇",
+    layout="wide"
+)
 
-st.markdown("Convert and split contact numbers between .txt and .vcf formats. Mobile-ready, easy and fast!")
+st.title("📇 VCF Converter Pro+")
+st.caption("TXT / CSV ⇄ VCF | TXT ⇄ CSV | Mobile Order Safe")
 
-# -------------------------------
-# Helper functions
-# -------------------------------
-def clean_number(n):
-    n = n.strip()
-    if n and ((n.startswith('+') and n[1:].isdigit()) or n.isdigit()):
-        return n if n.startswith('+') else '+' + n
-    return None
+# -------------------------------------------------
+# COUNTRY DETECTION
+# -------------------------------------------------
+COUNTRY_MAP = {
+    "971": "AE", "966": "SA", "91": "IN",
+    "1": "US", "44": "GB", "62": "ID",
+    "60": "MY", "63": "PH"
+}
 
-def generate_vcf(contacts, name_prefix, file_prefix, set_start=1, batch_size=50):
+def detect_country(raw):
+    digits = re.sub(r"\D", "", raw)
+    for code in sorted(COUNTRY_MAP, key=len, reverse=True):
+        if digits.startswith(code):
+            return COUNTRY_MAP[code]
+    return "IN"
+
+def normalize_number(raw):
+    raw = str(raw).strip()
+    if not raw:
+        return None, None
+    try:
+        region = detect_country(raw)
+        num = phonenumbers.parse(
+            raw if raw.startswith("+") else raw,
+            None if raw.startswith("+") else region
+        )
+        if phonenumbers.is_valid_number(num):
+            return (
+                phonenumbers.format_number(num, phonenumbers.PhoneNumberFormat.E164),
+                phonenumbers.region_code_for_number(num)
+            )
+    except:
+        pass
+    return None, None
+
+# -------------------------------------------------
+# VCF GENERATOR (SET-BASED + MOBILE SAFE)
+# -------------------------------------------------
+def generate_vcf(numbers, name_prefix, file_prefix, set_start, batch_size):
     vcf_files = {}
-    total_contacts = len(contacts)
-    total_sets = (total_contacts + batch_size - 1) // batch_size
+    total_sets = (len(numbers) + batch_size - 1) // batch_size
 
-    for set_num in range(total_sets):
-        start_idx = set_num * batch_size
-        end_idx = min((set_num + 1) * batch_size, total_contacts)
-        subset = contacts[start_idx:end_idx]
+    for s in range(total_sets):
+        chunk = numbers[s * batch_size : (s + 1) * batch_size]
+        set_no = set_start + s
+        pad = len(str(len(chunk)))
         lines = []
-        for i, num in enumerate(subset):
-            name = f"{name_prefix} {set_start + set_num:02} {i + 1:03}"
-            lines.append("BEGIN:VCARD")
-            lines.append("VERSION:3.0")
-            lines.append(f"N:{name};;;")
-            lines.append(f"FN:{name}")
-            lines.append(f"TEL;TYPE=CELL:{num}")
-            lines.append("END:VCARD")
-        vcf_files[f"{file_prefix}_{set_start + set_num}.vcf"] = "\n".join(lines)
+
+        for i, num in enumerate(chunk, start=1):
+            idx = str(i).zfill(pad)
+            full_name = f"{name_prefix} {set_no} {idx}"
+
+            lines.extend([
+                "BEGIN:VCARD",
+                "VERSION:3.0",
+                f"N:{idx};{name_prefix} {set_no};;;",
+                f"FN:{full_name}",
+                f"TEL;TYPE=CELL:{num}",
+                "END:VCARD"
+            ])
+
+        vcf_files[f"{file_prefix} {set_no}.vcf"] = "\n".join(lines)
+
     return vcf_files
 
+# -------------------------------------------------
+# TABS
+# -------------------------------------------------
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🔁 TXT ➜ VCF",
+    "📄 CSV ➜ VCF",
+    "🔄 VCF ➜ TXT",
+    "🧾 TXT ➜ CSV",
+    "🧾 CSV ➜ TXT",
+    "📂 Split Files"
+])
 
-# -------------------------------
-# Tabs
-# -------------------------------
-tab1, tab2, tab3 = st.tabs(["🔁 TXT ➜ VCF", "🔄 VCF ➜ TXT", "📂 Split Files"])
-
-# -------------------------------
-# Tab 1: TXT ➜ VCF
-# -------------------------------
+# =================================================
+# TXT ➜ VCF
+# =================================================
 with tab1:
-    st.header("🔁 TXT ➜ VCF")
+    txt_files = st.file_uploader(
+        "Upload TXT file(s)",
+        type=["txt"],
+        accept_multiple_files=True,
+        key="txt_vcf"
+    )
 
-    uploaded_files = st.file_uploader("📂 Upload TXT file(s) with phone numbers", type=["txt"], accept_multiple_files=True)
-    manual_input = st.text_area("✍️ Or Paste Numbers Here (one per line)", height=200)
+    manual = st.text_area("Or paste numbers", height=200)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        contact_type = st.radio("Contact Type", ["General", "Admin", "Navy"])
-    with col2:
-        batch_size = st.number_input("📦 Contacts per VCF", value=50, min_value=1)
-    with col3:
-        set_start = st.number_input("🔢 Start Set Number", value=1, min_value=1)
+    c1, c2, c3, c4 = st.columns(4)
+    batch = c1.number_input("Contacts per VCF", 1, 500, 50)
+    set_start = c2.number_input("Set start number", 1, 10000, 1)
+    name_prefix_txt = c3.text_input("Contact name prefix", "Contact")
+    file_prefix = c4.text_input("VCF file prefix", "Contacts")
 
-    # Manual prefix entry for all types
-    name_prefix = st.text_input("🔤 Contact Name Prefix (for FN/N field)", value=contact_type)
-    file_prefix = st.text_input("📁 VCF Filename Prefix", value=f"{contact_type.lower()}_file")
+    if st.button("🚀 Convert TXT → VCF"):
+        raw = []
+        if txt_files:
+            for f in txt_files:
+                raw.extend(f.read().decode().splitlines())
+        if manual.strip():
+            raw.extend(manual.splitlines())
 
-    if st.button("🚀 Convert to VCF"):
-        raw_numbers = []
+        seen, ordered, invalid, countries = set(), [], 0, []
 
-        if uploaded_files:
-            for file in uploaded_files:
-                content = file.read().decode("utf-8")
-                raw_numbers.extend(content.strip().splitlines())
+        for r in raw:
+            num, country = normalize_number(r)
+            if num:
+                if num not in seen:
+                    seen.add(num)
+                    ordered.append(num)
+                    countries.append(country)
+            else:
+                invalid += 1
 
-        if manual_input.strip():
-            raw_numbers.extend(manual_input.strip().splitlines())
+        if ordered:
+            vcf_files = generate_vcf(
+                ordered, name_prefix_txt, file_prefix, set_start, batch
+            )
 
-        cleaned = [clean_number(n) for n in raw_numbers]
-        contacts = sorted(set(filter(None, cleaned)), key=lambda x: int(x.replace('+', '').lstrip('0') or '0'))
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                for k, v in vcf_files.items():
+                    z.writestr(k, v)
+            buf.seek(0)
 
-        if not contacts:
-            st.error("❌ No valid phone numbers found.")
-        else:
-            vcf_dict = generate_vcf(contacts, name_prefix, file_prefix, set_start, batch_size)
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for filename, content in vcf_dict.items():
-                    zipf.writestr(filename, content)
-            zip_buffer.seek(0)
+            st.download_button("📥 Download VCF ZIP", buf, file_name=f"{file_prefix}.zip")
+            st.success(f"Valid: {len(ordered)} | Invalid: {invalid}")
 
-            st.success(f"✅ Converted {len(contacts)} contacts into {len(vcf_dict)} VCF file(s)")
-            st.download_button("📥 Download VCF ZIP", zip_buffer, file_name=f"{file_prefix}_contacts.zip", mime="application/zip")
+            df = pd.DataFrame(Counter(countries).items(), columns=["Country", "Count"])
+            st.bar_chart(df.set_index("Country"))
 
-
-# -------------------------------
-# Tab 2: VCF ➜ TXT
-# -------------------------------
+# =================================================
+# CSV ➜ VCF (SAME FEATURES)
+# =================================================
 with tab2:
-    st.header("🔄 VCF ➜ TXT")
+    csv_file = st.file_uploader(
+        "Upload CSV file",
+        type=["csv"],
+        key="csv_vcf"
+    )
 
-    vcf_files = st.file_uploader("📥 Upload one or more .vcf files", type=["vcf"], accept_multiple_files=True)
-    custom_txt_name = st.text_input("📁 TXT Filename (no extension)", value="contacts")
+    c1, c2, c3, c4 = st.columns(4)
+    batch = c1.number_input("Contacts per VCF", 1, 500, 50, key="csv_batch")
+    set_start = c2.number_input("Set start number", 1, 10000, 1, key="csv_set")
+    name_prefix_csv = c3.text_input("Contact name prefix", "Contact", key="csv_prefix")
+    file_prefix = c4.text_input("VCF file prefix", "Contacts", key="csv_file_prefix")
+
+    if csv_file and st.button("🚀 Convert CSV → VCF"):
+        df = pd.read_csv(csv_file)
+        phone_col = next(
+            (c for c in df.columns if "phone" in c.lower() or "number" in c.lower()),
+            None
+        )
+
+        if not phone_col:
+            st.error("No phone column found in CSV")
+        else:
+            seen, ordered, invalid, countries = set(), [], 0, []
+
+            for _, row in df.iterrows():
+                num, country = normalize_number(row[phone_col])
+                if num:
+                    if num not in seen:
+                        seen.add(num)
+                        ordered.append(num)
+                        countries.append(country)
+                else:
+                    invalid += 1
+
+            vcf_files = generate_vcf(
+                ordered, name_prefix_csv, file_prefix, set_start, batch
+            )
+
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                for k, v in vcf_files.items():
+                    z.writestr(k, v)
+            buf.seek(0)
+
+            st.download_button("📥 Download VCF ZIP", buf, file_name=f"{file_prefix}.zip")
+            st.success(f"Valid: {len(ordered)} | Invalid: {invalid}")
+
+            dfc = pd.DataFrame(Counter(countries).items(), columns=["Country", "Count"])
+            st.bar_chart(dfc.set_index("Country"))
+
+# =================================================
+# VCF ➜ TXT
+# =================================================
+with tab3:
+    vcf_files = st.file_uploader(
+        "Upload VCF file(s)",
+        type=["vcf"],
+        accept_multiple_files=True,
+        key="vcf_txt"
+    )
+
+    txt_name = st.text_input("Output TXT filename", "contacts")
 
     if vcf_files:
-        numbers = []
-        for vcf_file in vcf_files:
-            content = vcf_file.read().decode("utf-8")
-            lines = content.strip().splitlines()
-            for line in lines:
-                if line.startswith("TEL"):
-                    number = line.split(":")[-1].strip()
-                    number = ''.join(filter(str.isdigit, number))  # remove + and symbols
-                    if number:
-                        numbers.append(number)
+        seen, ordered = set(), []
+        for f in vcf_files:
+            content = f.read().decode(errors="ignore").replace("\r\n", "\n")
+            for line in content.splitlines():
+                m = re.search(r"TEL[^:]*:(.+)", line)
+                if m:
+                    num = m.group(1).strip()
+                    if num not in seen:
+                        seen.add(num)
+                        ordered.append(num)
 
-        if numbers:
-            txt_data = "\n".join(numbers)
-            st.download_button("📤 Download TXT", txt_data, file_name=f"{custom_txt_name}.txt", mime="text/plain")
-            st.success(f"✅ Extracted {len(numbers)} contacts from {len(vcf_files)} VCF file(s).")
+        st.download_button(
+            "📤 Download TXT",
+            "\n".join(ordered),
+            file_name=f"{txt_name}.txt"
+        )
 
+# =================================================
+# TXT ➜ CSV
+# =================================================
+with tab4:
+    txt_file = st.file_uploader("Upload TXT file", type=["txt"], key="txt_csv")
+    if txt_file:
+        lines = txt_file.read().decode().splitlines()
+        df = pd.DataFrame({"phone": lines})
+        st.download_button(
+            "📥 Download CSV",
+            df.to_csv(index=False),
+            file_name="contacts.csv"
+        )
 
-# -------------------------------
-# Tab 3: Split Files
-# -------------------------------
-with tab3:
-    st.header("📂 Split Files")
+# =================================================
+# CSV ➜ TXT
+# =================================================
+with tab5:
+    csv_file = st.file_uploader("Upload CSV file", type=["csv"], key="csv_txt")
+    if csv_file:
+        df = pd.read_csv(csv_file)
+        col = df.columns[0]
+        st.download_button(
+            "📥 Download TXT",
+            "\n".join(df[col].astype(str)),
+            file_name="contacts.txt"
+        )
 
-    split_choice = st.radio("Choose file type to split", ["TXT", "VCF"])
-    custom_prefix = st.text_input("📁 Custom Split Filename Prefix", value="split")
+# =================================================
+# SPLITTER
+# =================================================
+with tab6:
+    kind = st.radio("File type", ["TXT", "VCF"])
+    size = st.number_input("Contacts per file", 1, 1000, 100)
+    prefix = st.text_input("Output file prefix", "Split")
 
-    if split_choice == "TXT":
-        txt_file = st.file_uploader("📂 Upload TXT file", type=["txt"])
-        split_size = st.number_input("Contacts per TXT split", value=100, min_value=1)
-        if txt_file:
-            content = txt_file.read().decode("utf-8")
-            lines = content.strip().splitlines()
-            chunks = [lines[i:i+split_size] for i in range(0, len(lines), split_size)]
+    if kind == "TXT":
+        f = st.file_uploader("Upload TXT", type=["txt"], key="split_txt")
+        if f:
+            lines = f.read().decode().splitlines()
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                for i in range(0, len(lines), size):
+                    z.writestr(
+                        f"{prefix} {i//size+1}.txt",
+                        "\n".join(lines[i:i+size])
+                    )
+            buf.seek(0)
+            st.download_button("📥 Download ZIP", buf)
 
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for idx, chunk in enumerate(chunks, 1):
-                    zipf.writestr(f"{custom_prefix}_{idx}.txt", "\n".join(chunk))
-            zip_buffer.seek(0)
+    else:
+        f = st.file_uploader("Upload VCF", type=["vcf"], key="split_vcf")
+        if f:
+            content = f.read().decode().replace("\r\n", "\n")
+            cards = [c + "END:VCARD" for c in content.split("END:VCARD") if c.strip()]
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                for i in range(0, len(cards), size):
+                    z.writestr(
+                        f"{prefix} {i//size+1}.vcf",
+                        "\n".join(cards[i:i+size])
+                    )
+            buf.seek(0)
+            st.download_button("📥 Download ZIP", buf)
 
-            st.download_button("📥 Download Split TXT ZIP", zip_buffer, file_name=f"{custom_prefix}_txt_files.zip", mime="application/zip")
-            st.success(f"✅ Split into {len(chunks)} TXT files")
-
-    elif split_choice == "VCF":
-        vcf_file = st.file_uploader("📂 Upload VCF file", type=["vcf"])
-        split_size = st.number_input("Contacts per VCF split", value=100, min_value=1)
-        if vcf_file:
-            content = vcf_file.read().decode("utf-8")
-            vcards = content.split("END:VCARD")
-            vcards = [v.strip()+"\nEND:VCARD" for v in vcards if v.strip()]
-            chunks = [vcards[i:i+split_size] for i in range(0, len(vcards), split_size)]
-
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for idx, chunk in enumerate(chunks, 1):
-                    zipf.writestr(f"{custom_prefix}_{idx}.vcf", "\n".join(chunk))
-            zip_buffer.seek(0)
-
-            st.download_button("📥 Download Split VCF ZIP", zip_buffer, file_name=f"{custom_prefix}_vcf_files.zip", mime="application/zip")
-            st.success(f"✅ Split into {len(chunks)} VCF files")
-
-
-st.markdown("---\nMade by **Liyakath Ali Khan ✨** | Mobile-ready VCF tool | Streamlit-powered")
+# -------------------------------------------------
+# FOOTER
+# -------------------------------------------------
+st.markdown("---")
+st.info("🔐 Privacy Mode: All processing is local. No data is stored.")
+st.markdown("Made by **Liyakath Ali Khan ✨**")
