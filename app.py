@@ -30,18 +30,23 @@ def normalize_number(raw):
     raw = str(raw).strip()
     if not raw:
         return None
+
     digits = re.sub(r"\D", "", raw)
+
     try:
         if raw.startswith("+"):
             num = phonenumbers.parse(raw, None)
         else:
             num = phonenumbers.parse("+" + digits, None)
-        if phonenumbers.is_valid_number(num):
+
+        # IMPORTANT CHANGE HERE
+        if phonenumbers.is_possible_number(num):
             return phonenumbers.format_number(
                 num, phonenumbers.PhoneNumberFormat.E164
             )
     except:
         pass
+
     return None
 
 
